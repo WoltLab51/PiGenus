@@ -23,6 +23,8 @@ def match(task: dict) -> tuple:
     task:
         Task dict; should contain a ``"type"`` key.  A missing key is
         treated as an empty string and categorised as ``"unknown"``.
+        Non-dict values and unhashable/non-string ``"type"`` values are
+        handled gracefully – the function never raises.
 
     Returns
     -------
@@ -30,7 +32,10 @@ def match(task: dict) -> tuple:
         ``(problem_category, agent_name)`` – never raises, always returns a
         valid pair thanks to the fallback defaults in both matrices.
     """
-    task_type = task.get("type", "")
+    if not isinstance(task, dict):
+        task = {}
+    raw_type = task.get("type", "")
+    task_type = raw_type if isinstance(raw_type, str) else ""
     category = _problem_matrix.categorize(task_type)
     agent_name = _agent_matrix.resolve(category)
     return category, agent_name

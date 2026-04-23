@@ -159,6 +159,25 @@ class TestTaskQueue(unittest.TestCase):
         self.assertEqual(failed[0]["status"], "failed")
         self.assertEqual(failed[0]["reason"], "oops")
 
+    def test_peek_returns_first_pending(self):
+        q = TaskQueue()
+        t = q.enqueue("echo", {"message": "peek-me"})
+        peeked = q.peek()
+        self.assertIsNotNone(peeked)
+        self.assertEqual(peeked["id"], t["id"])
+        self.assertEqual(peeked["type"], "echo")
+
+    def test_peek_does_not_mutate_status(self):
+        q = TaskQueue()
+        q.enqueue("noop")
+        q.peek()
+        # Status must still be pending after peek
+        self.assertEqual(q.pending_count(), 1)
+
+    def test_peek_empty_returns_none(self):
+        q = TaskQueue()
+        self.assertIsNone(q.peek())
+
 
 # ---------------------------------------------------------------------------
 # Ledger tests
@@ -398,6 +417,16 @@ class TestMatcher(unittest.TestCase):
         self.assertEqual(len(result), 2)
         self.assertIsInstance(result[0], str)
         self.assertIsInstance(result[1], str)
+
+    def test_non_dict_task_does_not_raise(self):
+        category, agent = match(None)
+        self.assertEqual(category, "unknown")
+        self.assertEqual(agent, "basic_worker")
+
+    def test_unhashable_type_value_does_not_raise(self):
+        category, agent = match({"type": ["list", "value"]})
+        self.assertEqual(category, "unknown")
+        self.assertEqual(agent, "basic_worker")
 
 
 if __name__ == "__main__":

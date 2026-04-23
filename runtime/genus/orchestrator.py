@@ -82,7 +82,7 @@ class Orchestrator:
             if next_task:
                 category, agent_name = match(next_task)
                 logger.info(
-                    "Match | task_id=%s type=%s → category=%s agent=%s",
+                    "Match | task_id=%s type=%s -> category=%s agent=%s",
                     next_task.get("id", "?"), next_task.get("type", "?"),
                     category, agent_name,
                 )
