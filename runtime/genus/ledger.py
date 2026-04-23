@@ -32,17 +32,31 @@ class Ledger:
         self.load()
 
     def load(self):
-        """Load existing entries; start fresh when file is absent."""
-        if os.path.exists(self._path):
+        """Load existing entries; start fresh when file is absent or corrupt."""
+        if not os.path.exists(self._path):
+            self._entries = []
+            return
+        try:
             with open(self._path, "r") as fh:
                 self._entries = json.load(fh)
-        else:
+        except json.JSONDecodeError:
+            corrupt_path = self._path + ".corrupt"
+            try:
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                os.replace(self._path, corrupt_path)
+            except OSError:
+                pass
             self._entries = []
 
     def save(self):
-        """Persist entries to disk."""
-        with open(self._path, "w") as fh:
+        """Persist entries to disk atomically (survives partial writes)."""
+        tmp_path = self._path + ".tmp"
+        with open(tmp_path, "w") as fh:
             json.dump(self._entries, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, self._path)
 
     def record(self, entry: dict):
         """Append *entry* (timestamped) to the ledger."""

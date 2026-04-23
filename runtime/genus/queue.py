@@ -30,17 +30,46 @@ class TaskQueue:
         self.load()
 
     def load(self):
-        """Load queue from disk; start with an empty list when absent."""
-        if os.path.exists(QUEUE_FILE):
+        """Load queue from disk; start with an empty list when absent or corrupt.
+
+        Any tasks left in ``"processing"`` status (from a previous crash
+        between ``dequeue`` and ``mark_done/mark_failed``) are reset to
+        ``"pending"`` so they are not lost.
+        """
+        if not os.path.exists(QUEUE_FILE):
+            self._queue = []
+            return
+        try:
             with open(QUEUE_FILE, "r") as fh:
                 self._queue = json.load(fh)
-        else:
+        except json.JSONDecodeError:
+            corrupt_path = QUEUE_FILE + ".corrupt"
+            try:
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                os.replace(QUEUE_FILE, corrupt_path)
+            except OSError:
+                pass
             self._queue = []
+            return
+
+        # Reset interrupted tasks so they are retried on restart.
+        recovered = 0
+        for task in self._queue:
+            if task.get("status") == "processing":
+                task["status"] = "pending"
+                recovered += 1
+        if recovered:
+            self.save()
 
     def save(self):
-        """Persist current queue state to disk."""
-        with open(QUEUE_FILE, "w") as fh:
+        """Persist current queue state to disk atomically (survives partial writes)."""
+        tmp_path = QUEUE_FILE + ".tmp"
+        with open(tmp_path, "w") as fh:
             json.dump(self._queue, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, QUEUE_FILE)
 
     def enqueue(self, task_type: str, payload: Optional[dict] = None) -> dict:
         """Add a new task and return it."""
@@ -84,6 +113,15 @@ class TaskQueue:
     def pending_count(self) -> int:
         """Return the number of tasks still waiting to be processed."""
         return sum(1 for t in self._queue if t["status"] == "pending")
+
+    def unfinished_count(self) -> int:
+        """Return the number of tasks not yet in a terminal state.
+
+        Includes both ``"pending"`` and ``"processing"`` tasks so the
+        orchestrator can detect whether work remains even after a restart
+        that recovered interrupted tasks.
+        """
+        return sum(1 for t in self._queue if t["status"] in ("pending", "processing"))
 
     def __len__(self) -> int:
         return len(self._queue)

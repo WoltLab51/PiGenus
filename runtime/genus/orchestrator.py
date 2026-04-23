@@ -79,7 +79,7 @@ class Orchestrator:
 
             processed = self.worker.run_once()
 
-            if not processed and self.queue.pending_count() == 0:
+            if not processed and self.queue.unfinished_count() == 0:
                 logger.info("Queue empty – running final evaluation.")
                 break
 

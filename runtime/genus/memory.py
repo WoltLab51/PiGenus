@@ -25,17 +25,32 @@ class Memory:
         self.load()
 
     def load(self):
-        """Load state from disk; start fresh when file is absent."""
-        if os.path.exists(STATE_FILE):
+        """Load state from disk; start fresh when file is absent or corrupt."""
+        if not os.path.exists(STATE_FILE):
+            self._data = {}
+            return
+        try:
             with open(STATE_FILE, "r") as fh:
                 self._data = json.load(fh)
-        else:
+        except json.JSONDecodeError:
+            # Preserve the corrupted file for debugging, then start clean.
+            corrupt_path = STATE_FILE + ".corrupt"
+            try:
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                os.replace(STATE_FILE, corrupt_path)
+            except OSError:
+                pass
             self._data = {}
 
     def save(self):
-        """Persist current state to disk."""
-        with open(STATE_FILE, "w") as fh:
+        """Persist current state to disk atomically (survives partial writes)."""
+        tmp_path = STATE_FILE + ".tmp"
+        with open(tmp_path, "w") as fh:
             json.dump(self._data, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, STATE_FILE)
 
     def get(self, key: str, default: Any = None) -> Any:
         """Return value for *key*, or *default* if absent."""

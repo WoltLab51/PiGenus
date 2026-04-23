@@ -5,7 +5,6 @@ Run with:
     python runtime/tests/test_genus.py       (from repo root)
 """
 
-import json
 import os
 import sys
 import tempfile
@@ -56,6 +55,7 @@ from genus.queue import TaskQueue
 from genus.ledger import Ledger
 from genus.worker import BasicWorker
 from genus.evaluator import Evaluator
+from genus.orchestrator import Orchestrator
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +242,81 @@ class TestEvaluator(unittest.TestCase):
         # Stats should be persisted in memory
         m2 = Memory()
         self.assertEqual(m2.get("tasks_done"), 2)
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator tests
+# ---------------------------------------------------------------------------
+
+class TestOrchestrator(unittest.TestCase):
+    def setUp(self):
+        _rm(
+            "state.json",
+            "queue.json",
+            "task_ledger.json",
+            "agent_ledger.json",
+        )
+
+    def _make_orchestrator(self, **kwargs):
+        """Convenience: Orchestrator with no tick delay for fast tests."""
+        return Orchestrator(tick_delay=0, **kwargs)
+
+    def test_first_run_seeds_tasks_and_sets_bootstrapped(self):
+        orc = self._make_orchestrator()
+        orc.run()
+        # Bootstrap flag must be persisted.
+        m = Memory()
+        self.assertTrue(m.get("bootstrapped"))
+
+    def test_first_run_processes_seeded_tasks(self):
+        orc = self._make_orchestrator()
+        orc.run()
+        # Both seeded tasks should be done.
+        m = Memory()
+        self.assertEqual(m.get("tasks_done"), 2)
+        self.assertEqual(m.get("tasks_failed"), 0)
+
+    def test_restart_skips_seeding(self):
+        # First run seeds and processes.
+        self._make_orchestrator().run()
+        # Second run should NOT re-seed; queue stays empty.
+        orc2 = self._make_orchestrator()
+        orc2.run()
+        q = TaskQueue()
+        # All tasks remain in done state; no new pending tasks.
+        self.assertEqual(q.pending_count(), 0)
+
+    def test_evaluation_always_runs(self):
+        """Evaluator must update stats even when queue was already empty."""
+        # Pre-seed bootstrapped so the orchestrator skips seeding.
+        m = Memory()
+        m.set("bootstrapped", True)
+        orc = self._make_orchestrator()
+        orc.run()
+        # Evaluator should have written stats (0 done, 0 failed on clean run).
+        m2 = Memory()
+        self.assertIsNotNone(m2.get("tasks_done"))
+
+    def test_processing_tasks_recovered_on_restart(self):
+        """Tasks stuck in 'processing' must be retried after a crash/restart."""
+        q = TaskQueue()
+        task = q.enqueue("echo", {"message": "crash-test"})
+        # Simulate crash: mark as processing but never finish.
+        q.dequeue()  # sets status="processing" and saves to disk
+
+        # Reload queue (simulates restart).
+        q2 = TaskQueue()
+        # The task should have been reset to pending.
+        stuck = [t for t in q2._queue if t["id"] == task["id"]]
+        self.assertEqual(stuck[0]["status"], "pending")
+
+    def test_unfinished_count_includes_processing(self):
+        q = TaskQueue()
+        q.enqueue("noop")
+        q.enqueue("noop")
+        q.dequeue()  # first task is now "processing"
+        self.assertEqual(q.unfinished_count(), 2)
+        self.assertEqual(q.pending_count(), 1)
 
 
 if __name__ == "__main__":
