@@ -103,6 +103,36 @@ class TestMemory(unittest.TestCase):
         snapshot["a"] = 999  # mutating the copy should not affect Memory
         self.assertEqual(m.get("a"), 1)
 
+    def test_set_in_and_get_section(self):
+        m = Memory()
+        m.set_in("semantic", "foo", 42)
+        self.assertEqual(m.get_section("semantic")["foo"], 42)
+
+    def test_backward_compat_flat_key(self):
+        m = Memory()
+        m.set("old_key", "val")
+        m2 = Memory()
+        self.assertEqual(m2.get("old_key"), "val")
+
+    def test_migration_from_flat_format(self):
+        import json as _json
+        # Write a raw flat JSON file (old format without section keys).
+        flat_path = os.path.join(_TMPDIR, "state.json")
+        with open(flat_path, "w") as fh:
+            _json.dump({"tasks_done": 3}, fh)
+        m = Memory()
+        self.assertEqual(m.get("tasks_done"), 3)
+
+    def test_non_dict_json_is_treated_as_corrupt(self):
+        import json as _json
+        # Write valid JSON that is not a dict (e.g. a list).
+        non_dict_path = os.path.join(_TMPDIR, "state.json")
+        with open(non_dict_path, "w") as fh:
+            _json.dump([1, 2, 3], fh)
+        m = Memory()
+        # Should start fresh without raising.
+        self.assertEqual(m.all(), {})
+
 
 # ---------------------------------------------------------------------------
 # TaskQueue tests
@@ -247,6 +277,21 @@ class TestLedger(unittest.TestCase):
         tl2 = Ledger(os.path.join(_TMPDIR, "task_ledger.json"))
         self.assertEqual(len(tl2.entries()), 1)
 
+    def test_enriched_entry_fields(self):
+        _rm("queue.json", "task_ledger.json", "agent_ledger.json")
+        q = TaskQueue()
+        tl = Ledger(os.path.join(_TMPDIR, "task_ledger.json"))
+        al = Ledger(os.path.join(_TMPDIR, "agent_ledger.json"))
+        worker = BasicWorker(q, tl, al)
+        q.enqueue("echo", {"message": "enrich-test"})
+        worker.run_once()
+        done = [e for e in tl.entries() if e.get("event") == "task_done"]
+        self.assertEqual(len(done), 1)
+        entry = done[0]
+        for field in ("agent_name", "category", "success_score", "efficiency_score",
+                      "stability_score", "resource_score", "learning_score", "duration_ms"):
+            self.assertIn(field, entry, f"Missing field: {field}")
+
 
 # ---------------------------------------------------------------------------
 # BasicWorker tests
@@ -287,6 +332,36 @@ class TestBasicWorker(unittest.TestCase):
     def test_empty_queue_returns_false(self):
         ran = self.worker.run_once()
         self.assertFalse(ran)
+
+    def test_classify_task(self):
+        self.queue.enqueue("classify", {"task_type": "echo"})
+        ran = self.worker.run_once()
+        self.assertTrue(ran)
+        done = [e for e in self.tl.entries() if e["event"] == "task_done"]
+        self.assertEqual(len(done), 1)
+        self.assertEqual(done[0]["result"], {"category": "communication", "task_type": "echo"})
+
+    def test_classify_unknown_type(self):
+        self.queue.enqueue("classify", {"task_type": "totally_unknown"})
+        self.worker.run_once()
+        done = [e for e in self.tl.entries() if e["event"] == "task_done"]
+        self.assertIn("category", done[0]["result"])
+        self.assertEqual(done[0]["result"]["category"], "unknown")
+
+    def test_ledger_entry_has_agent_name(self):
+        self.queue.enqueue("echo", {"message": "agent-name-test"})
+        self.worker.run_once()
+        done = [e for e in self.tl.entries() if e["event"] == "task_done"]
+        self.assertEqual(done[0]["agent_name"], "basic_worker")
+
+    def test_ledger_entry_has_scores(self):
+        self.queue.enqueue("echo", {"message": "scores-test"})
+        self.worker.run_once()
+        done = [e for e in self.tl.entries() if e["event"] == "task_done"]
+        entry = done[0]
+        self.assertIn("success_score", entry)
+        self.assertIn("efficiency_score", entry)
+        self.assertIn("stability_score", entry)
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +551,10 @@ class TestProblemMatrix(unittest.TestCase):
         self.assertEqual(pm.categorize("custom"), "custom_category")
         self.assertEqual(pm.categorize("echo"), "unknown")
 
+    def test_classify_type(self):
+        pm = ProblemMatrix()
+        self.assertEqual(pm.categorize("classify"), "classification")
+
 
 # ---------------------------------------------------------------------------
 # AgentMatrix tests
@@ -538,6 +617,11 @@ class TestMatcher(unittest.TestCase):
     def test_unhashable_type_value_does_not_raise(self):
         category, agent = match({"type": ["list", "value"]})
         self.assertEqual(category, "unknown")
+        self.assertEqual(agent, "basic_worker")
+
+    def test_classify_task(self):
+        category, agent = match({"type": "classify"})
+        self.assertEqual(category, "classification")
         self.assertEqual(agent, "basic_worker")
 
 

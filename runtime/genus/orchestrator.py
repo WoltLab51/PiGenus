@@ -91,7 +91,7 @@ class Orchestrator:
         stops when the queue is empty or *max_ticks* is reached.  A final
         evaluation pass is always executed before returning.
         """
-        logger.info("PiGenus v0.2 orchestrator starting.")
+        logger.info("PiGenus v0.3 orchestrator starting.")
         self._bootstrap()
 
         tick = 0
