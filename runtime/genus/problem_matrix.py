@@ -9,6 +9,7 @@ unexpected input.
 _DEFAULT_MAPPING: dict = {
     "echo": "communication",
     "noop": "maintenance",
+    "classify": "classification",
 }
 
 _FALLBACK_CATEGORY = "unknown"

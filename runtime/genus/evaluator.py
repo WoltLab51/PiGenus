@@ -56,13 +56,13 @@ class Evaluator:
         # learning_score: grows with experience, capped at 1.0
         learning_score = min(1.0, done / 10.0)
 
-        self._memory.set("tasks_done", done)
-        self._memory.set("tasks_failed", failed)
-        self._memory.set("success_score", success_score)
-        self._memory.set("efficiency_score", efficiency_score)
-        self._memory.set("stability_score", stability_score)
-        self._memory.set("resource_score", resource_score)
-        self._memory.set("learning_score", learning_score)
+        self._memory.set_in("stats", "tasks_done", done)
+        self._memory.set_in("stats", "tasks_failed", failed)
+        self._memory.set_in("stats", "success_score", success_score)
+        self._memory.set_in("stats", "efficiency_score", efficiency_score)
+        self._memory.set_in("stats", "stability_score", stability_score)
+        self._memory.set_in("stats", "resource_score", resource_score)
+        self._memory.set_in("stats", "learning_score", learning_score)
 
         stats = {
             "tasks_done": done,

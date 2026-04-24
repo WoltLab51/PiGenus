@@ -1,6 +1,19 @@
 """Persistent memory for PiGenus.
 
-Backed by data/state.json.  A simple key-value store that survives restarts.
+Backed by data/state.json.  A namespaced key-value store that survives
+restarts.  The file is structured into four top-level sections::
+
+    {
+        "runtime":  {},
+        "episodic": {},
+        "semantic": {},
+        "stats":    {}
+    }
+
+The public ``get``/``set``/``all`` API remains backward-compatible: flat
+keys written or read via those methods are stored under the ``"runtime"``
+section.  Callers that need explicit namespacing can use ``set_in`` /
+``get_section``.
 """
 
 import json
@@ -11,27 +24,41 @@ from typing import Any
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 STATE_FILE = os.path.join(DATA_DIR, "state.json")
 
+_SECTIONS = ("runtime", "episodic", "semantic", "stats")
+_DEFAULT_SECTION = "runtime"
+
 
 class Memory:
-    """Simple key-value store that persists to state.json.
+    """Namespaced key-value store that persists to state.json.
 
     On construction the existing file is loaded (if present), so all
     previously stored values are immediately available after a restart.
+
+    Sections
+    --------
+    runtime  – general operational keys (default for ``get``/``set``)
+    episodic – event/episode records
+    semantic – long-term knowledge
+    stats    – evaluation scores and counters
     """
 
     def __init__(self):
         os.makedirs(DATA_DIR, exist_ok=True)
-        self._data: dict = {}
+        self._data: dict = {s: {} for s in _SECTIONS}
         self.load()
 
+    # ------------------------------------------------------------------
+    # Persistence
+    # ------------------------------------------------------------------
+
     def load(self):
-        """Load state from disk; start fresh when file is absent or corrupt."""
+        """Load state from disk; migrate flat format; start fresh on error."""
         if not os.path.exists(STATE_FILE):
-            self._data = {}
+            self._data = {s: {} for s in _SECTIONS}
             return
         try:
             with open(STATE_FILE, "r") as fh:
-                self._data = json.load(fh)
+                raw = json.load(fh)
         except json.JSONDecodeError:
             # Preserve the corrupted file for debugging, then start clean.
             corrupt_path = STATE_FILE + ".corrupt"
@@ -41,7 +68,16 @@ class Memory:
                 os.replace(STATE_FILE, corrupt_path)
             except OSError:
                 pass
-            self._data = {}
+            self._data = {s: {} for s in _SECTIONS}
+            return
+
+        # Migration: if the file lacks top-level section keys, it is the old
+        # flat format – move all keys into the "runtime" section.
+        if not any(k in raw for k in _SECTIONS):
+            self._data = {s: {} for s in _SECTIONS}
+            self._data[_DEFAULT_SECTION].update(raw)
+        else:
+            self._data = {s: raw.get(s, {}) for s in _SECTIONS}
 
     def save(self):
         """Persist current state to disk atomically (survives partial writes)."""
@@ -52,15 +88,62 @@ class Memory:
             os.fsync(fh.fileno())
         os.replace(tmp_path, STATE_FILE)
 
+    # ------------------------------------------------------------------
+    # Backward-compatible flat API (operates on the "runtime" section)
+    # ------------------------------------------------------------------
+
     def get(self, key: str, default: Any = None) -> Any:
-        """Return value for *key*, or *default* if absent."""
-        return self._data.get(key, default)
+        """Return value for *key* from any section, or *default* if absent.
+
+        Searches the ``runtime`` section first, then all other sections in
+        order, so that existing callers using flat keys continue to work.
+        """
+        for section in _SECTIONS:
+            if key in self._data[section]:
+                return self._data[section][key]
+        return default
 
     def set(self, key: str, value: Any):
-        """Store *value* for *key* and persist immediately."""
-        self._data[key] = value
+        """Store *value* for *key* in the ``runtime`` section and persist."""
+        self._data[_DEFAULT_SECTION][key] = value
         self.save()
 
     def all(self) -> dict:
-        """Return a copy of the entire state dictionary."""
-        return dict(self._data)
+        """Return a flat copy of all keys across all sections."""
+        merged: dict = {}
+        for section in _SECTIONS:
+            merged.update(self._data[section])
+        return merged
+
+    # ------------------------------------------------------------------
+    # Namespaced API
+    # ------------------------------------------------------------------
+
+    def set_in(self, section: str, key: str, value: Any):
+        """Store *value* for *key* in the named *section* and persist.
+
+        Parameters
+        ----------
+        section:
+            One of ``"runtime"``, ``"episodic"``, ``"semantic"``, ``"stats"``.
+        key:
+            The key within the section.
+        value:
+            JSON-serialisable value.
+        """
+        if section not in _SECTIONS:
+            raise ValueError(f"Unknown memory section: {section!r}. Choose from {', '.join(_SECTIONS)}")
+        self._data[section][key] = value
+        self.save()
+
+    def get_section(self, section: str) -> dict:
+        """Return a copy of all key-value pairs in *section*.
+
+        Parameters
+        ----------
+        section:
+            One of ``"runtime"``, ``"episodic"``, ``"semantic"``, ``"stats"``.
+        """
+        if section not in _SECTIONS:
+            raise ValueError(f"Unknown memory section: {section!r}. Choose from {', '.join(_SECTIONS)}")
+        return dict(self._data[section])
