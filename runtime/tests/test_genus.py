@@ -123,6 +123,16 @@ class TestMemory(unittest.TestCase):
         m = Memory()
         self.assertEqual(m.get("tasks_done"), 3)
 
+    def test_non_dict_json_is_treated_as_corrupt(self):
+        import json as _json
+        # Write valid JSON that is not a dict (e.g. a list).
+        non_dict_path = os.path.join(_TMPDIR, "state.json")
+        with open(non_dict_path, "w") as fh:
+            _json.dump([1, 2, 3], fh)
+        m = Memory()
+        # Should start fresh without raising.
+        self.assertEqual(m.all(), {})
+
 
 # ---------------------------------------------------------------------------
 # TaskQueue tests

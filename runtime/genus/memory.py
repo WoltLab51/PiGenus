@@ -71,6 +71,18 @@ class Memory:
             self._data = {s: {} for s in _SECTIONS}
             return
 
+        # Guard against valid JSON that is not a dict (e.g. a list or string).
+        if not isinstance(raw, dict):
+            corrupt_path = STATE_FILE + ".corrupt"
+            try:
+                if os.path.exists(corrupt_path):
+                    os.remove(corrupt_path)
+                os.replace(STATE_FILE, corrupt_path)
+            except OSError:
+                pass
+            self._data = {s: {} for s in _SECTIONS}
+            return
+
         # Migration: if the file lacks top-level section keys, it is the old
         # flat format – move all keys into the "runtime" section.
         if not any(k in raw for k in _SECTIONS):
@@ -93,10 +105,17 @@ class Memory:
     # ------------------------------------------------------------------
 
     def get(self, key: str, default: Any = None) -> Any:
-        """Return value for *key* from any section, or *default* if absent.
+        """Return value for *key*, or *default* if absent.
 
-        Searches the ``runtime`` section first, then all other sections in
-        order, so that existing callers using flat keys continue to work.
+        Searches sections in order: ``runtime`` → ``episodic`` → ``semantic``
+        → ``stats``.  The first section that contains *key* wins.  This
+        precedence ensures that ``set()`` callers (which always write to
+        ``runtime``) are never silently shadowed by section-specific values,
+        and that stats written via ``set_in("stats", ...)`` remain accessible
+        through the flat API.
+
+        If the same key exists in more than one section (which should be
+        avoided by callers), the earlier section takes precedence.
         """
         for section in _SECTIONS:
             if key in self._data[section]:
@@ -109,7 +128,13 @@ class Memory:
         self.save()
 
     def all(self) -> dict:
-        """Return a flat copy of all keys across all sections."""
+        """Return a flat copy of all keys across all sections.
+
+        Sections are merged in order: ``runtime``, ``episodic``, ``semantic``,
+        ``stats``.  When the same key exists in multiple sections the *later*
+        section's value overwrites the earlier one.  Callers that need
+        section-isolated data should use :meth:`get_section` instead.
+        """
         merged: dict = {}
         for section in _SECTIONS:
             merged.update(self._data[section])

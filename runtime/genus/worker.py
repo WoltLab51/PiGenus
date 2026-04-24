@@ -101,7 +101,7 @@ class BasicWorker:
                     "agent_name": self.NAME,
                     "reason": reason,
                     "success_score": 0.0,
-                    "efficiency_score": 0.0,
+                    "efficiency_score": max(0.0, min(1.0, 1.0 - duration_ms / _EFFICIENCY_BASELINE_MS)),
                     "stability_score": 0.0,
                     "resource_score": _NEUTRAL_RESOURCE_SCORE,
                     "learning_score": _NEUTRAL_LEARNING_SCORE,
