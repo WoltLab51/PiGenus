@@ -341,9 +341,6 @@ class TestSubmitTaskCLI(_Base):
         "..", "submit_task.py",
     )
 
-    def tearDown(self):
-        super().tearDown()
-
     def _call_submit(self, message):
         """Invoke submit_echo_task directly (no subprocess) using the tmpdir."""
         # Import function directly to keep tests fast and isolated.
