@@ -57,8 +57,12 @@ def submit_echo_task(message: str, data_dir: str = None) -> str:
 
     tasks.append({"type": "echo", "payload": {"message": message}})
 
-    with open(queue_path, "w") as fh:
+    tmp_path = queue_path + ".tmp"
+    with open(tmp_path, "w") as fh:
         json.dump(tasks, fh, indent=2)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp_path, queue_path)
 
     return queue_path
 

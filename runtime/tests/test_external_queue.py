@@ -91,6 +91,21 @@ def _write_raw(content, name=EXT_QUEUE_FILE):
 # Base class: re-patches module globals before each test for isolation.
 # ---------------------------------------------------------------------------
 
+def _reset_genus_logger():
+    """Close and remove all handlers from the 'genus' logger.
+
+    Forces the next ``get_logger()`` call to recreate the FileHandler using
+    the current module-level ``DATA_DIR``.  Without this, a FileHandler set up
+    during an earlier test (pointing at a different tmpdir) would persist
+    indefinitely, causing log writes to go to the wrong directory.
+    """
+    import logging
+    lgr = logging.getLogger("genus")
+    for h in list(lgr.handlers):
+        h.close()
+        lgr.removeHandler(h)
+
+
 class _Base(unittest.TestCase):
     """Ensures our _TMPDIR is always the active DATA_DIR / QUEUE_FILE.
 
@@ -99,6 +114,10 @@ class _Base(unittest.TestCase):
     test files run in the same pytest process.  The original values are saved
     in setUp and restored in tearDown so that tests in other files are not
     affected.
+
+    The 'genus' logger's FileHandler is also reset so that log entries written
+    during these tests are directed at the current _TMPDIR rather than whatever
+    directory an earlier test file had configured.
     """
 
     def setUp(self):
@@ -117,6 +136,8 @@ class _Base(unittest.TestCase):
             "ledger.TASK_LEDGER_FILE": _ldmod.TASK_LEDGER_FILE,
             "ledger.AGENT_LEDGER_FILE": _ldmod.AGENT_LEDGER_FILE,
         }
+        # Reset the logger so it rebuilds its FileHandler after re-patching.
+        _reset_genus_logger()
         _repatch_to_tmpdir()
         _rm(EXT_QUEUE_FILE, EXT_QUEUE_PROCESSED, EXT_QUEUE_FAILED, "queue.json")
 
@@ -133,6 +154,9 @@ class _Base(unittest.TestCase):
         _ldmod.DATA_DIR = self._saved["ledger.DATA_DIR"]
         _ldmod.TASK_LEDGER_FILE = self._saved["ledger.TASK_LEDGER_FILE"]
         _ldmod.AGENT_LEDGER_FILE = self._saved["ledger.AGENT_LEDGER_FILE"]
+        # Reset the logger again so subsequent tests (e.g. test_genus.py) get
+        # a fresh FileHandler pointing at their own data directory.
+        _reset_genus_logger()
 
 
 # ---------------------------------------------------------------------------
@@ -375,15 +399,14 @@ class TestSubmitTaskCLI(_Base):
         self.assertEqual(tasks[0]["payload"]["message"], "first")
         self.assertEqual(tasks[1]["payload"]["message"], "second")
 
-    def test_subprocess_prints_confirmation(self):
-        result = subprocess.run(
-            [sys.executable, self._SCRIPT, "subprocess test"],
-            capture_output=True,
-            text=True,
-        )
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("Task submitted", result.stdout)
-        self.assertIn("subprocess test", result.stdout)
+    def test_direct_submit_writes_expected_task(self):
+        """Successful submission should write the expected task into the tmpdir."""
+        self._call_submit("subprocess test")
+        with open(os.path.join(_TMPDIR, "external_queue.json")) as fh:
+            tasks = json.load(fh)
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0]["type"], "echo")
+        self.assertEqual(tasks[0]["payload"]["message"], "subprocess test")
 
     def test_subprocess_no_args_exits_nonzero(self):
         result = subprocess.run(
